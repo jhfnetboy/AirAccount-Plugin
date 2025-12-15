@@ -1,0 +1,6 @@
+[submodule "submodules/chrome-template"]
+	path = submodules/chrome-template
+	url = https://github.com/rickwillcox/react-typescript-chrome-extension-template
+[submodule "lib/better-auth"]
+	path = lib/better-auth
+	url = https://github.com/better-auth/better-auth

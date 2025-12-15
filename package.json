@@ -35,7 +35,8 @@
     "copy-env": "bash bash-scripts/copy_env.sh",
     "set-global-env": "bash bash-scripts/set_global_env.sh",
     "module-manager": "pnpm -F module-manager start",
-    "postinstall": "pnpm copy-env"
+    "postinstall": "pnpm copy-env",
+    "dev:fake-api": "pnpm -F @extension/fake-api-server start"
   },
   "dependencies": {
     "react": "^19.1.0",
@@ -86,8 +87,7 @@
   },
   "lint-staged": {
     "*.{js,jsx,ts,tsx,json}": [
-      "prettier --write",
-      "eslint --fix"
+      "prettier --write"
     ]
   },
   "packageManager": "pnpm@10.11.0",

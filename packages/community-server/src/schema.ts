@@ -72,3 +72,10 @@ export const passkey = sqliteTable('passkey', {
   transports: text('transports'),
   createdAt: integer('created_at', { mode: 'timestamp' }),
 });
+
+export const passkeyChallenge = sqliteTable('passkey_challenge', {
+  id: text('id').primaryKey(),
+  challenge: text('challenge').notNull(),
+  userId: text('user_id'), // Optional, as registration might not have user ID yet? Actually WebAuthn needs user ID.
+  expiresAt: integer('expires_at', { mode: 'timestamp' }).notNull(),
+});

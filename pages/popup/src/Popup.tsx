@@ -1,8 +1,7 @@
 import '@src/Popup.css';
 import { useState } from 'react';
+import { authClient } from './lib/auth-client';
 import { startRegistration } from '@simplewebauthn/browser';
-
-const FAKE_API_URL = 'http://localhost:8088';
 
 const Popup = () => {
   const [status, setStatus] = useState('');
@@ -11,76 +10,53 @@ const Popup = () => {
     setStatus('Starting registration...');
 
     // A fake user ID for demonstration purposes
-    const userId = `user_${Date.now()}`;
-    const username = `${userId}@example.com`;
+    const email = `user_${Date.now()}@example.com`;
+    const name = `User ${Date.now()}`;
+
+    console.log('AuthClient Passkey:', authClient.passkey);
 
     try {
-      // 1. Get registration options from the server
-      const rpID = chrome?.runtime?.id || 'localhost';
-      console.log('Sending rpID:', rpID);
-      const resp = await fetch(`${FAKE_API_URL}/api/v1/auth/register-challenge`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ userId, username, rpID }),
+      // 1. Generate Options
+      const optionsResp = await authClient.passkey.generateRegistrationOptions({
+        email,
+        name,
       });
 
-      if (!resp.ok) {
-        const errorText = await resp.text();
-        let errorMessage = `Failed to get challenge: ${resp.status} ${resp.statusText}`;
-        try {
-          const errorJson = JSON.parse(errorText);
-          if (errorJson.error) errorMessage += ` - ${errorJson.error}`;
-        } catch {
-          errorMessage += ` - ${errorText}`;
-        }
-        throw new Error(errorMessage);
+      if (optionsResp.error) {
+        throw new Error(optionsResp.error.message);
       }
 
-      const options = await resp.json();
-      console.log('Registration options full:', options);
-      console.log('RP options:', options.rp);
+      const options = optionsResp.data;
+      console.log('Registration Options:', options);
 
-      // Allow browser to determine the RP ID from the context
-      // This helps avoid mismatches if the extension ID format differs
-      const rpId = options.rp.id;
-      delete options.rp.id;
-
-      setStatus('Got challenge, awaiting user interaction...');
-
-      // 2. Start WebAuthn registration
+      // 2. Start Registration (using simplewebauthn browser, or better-auth's internal helper if exposed, but simplewebauthn is standard)
+      // better-auth client usually handles this in signUp, but since signUp failed, we do it manually.
+      // We need to import startRegistration again.
       const attestation = await startRegistration({ optionsJSON: options });
-      setStatus('User interaction complete, verifying...');
 
-      // 3. Send attestation to server for verification
-      const verificationResp = await fetch(`${FAKE_API_URL}/api/v1/auth/register-verify`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ userId, cred: attestation }),
+      // 3. Verify Registration
+      const verifyResp = await authClient.passkey.verifyRegistration({
+        response: attestation,
+        email,
+        name,
       });
 
-      const verificationJSON = await verificationResp.json();
-
-      if (verificationJSON && verificationJSON.verified) {
-        setStatus(
-          `✅ Registration successful! User: ${verificationJSON.user.id}, Address: ${verificationJSON.user.web3_account_address}`,
-        );
-      } else {
-        throw new Error(`Verification failed: ${verificationJSON.error || 'Unknown error'}`);
+      if (verifyResp.error) {
+        throw new Error(verifyResp.error.message);
       }
+
+      setStatus('✅ Registration successful!');
+      console.log('Registration result', verifyResp.data);
     } catch (error: any) {
-      setStatus(`❌ Error: ${error.message}`);
-      console.error(error);
+      console.error('Registration error:', error);
+      setStatus(`❌ Error: ${error.message || JSON.stringify(error) || 'Unknown error'}`);
     }
   };
 
   return (
     <div className="min-w-[300px] bg-gray-800 p-4 text-white">
       <header className="flex flex-col items-center">
-        <h1 className="mb-4 text-xl font-bold">Passkey Demo</h1>
+        <h1 className="mb-4 text-xl font-bold">Passkey Demo (Better Auth)</h1>
         <button
           className="rounded bg-blue-500 px-4 py-2 font-bold text-white hover:bg-blue-700"
           onClick={handleRegister}>
@@ -94,5 +70,4 @@ const Popup = () => {
   );
 };
 
-// We are removing the withErrorBoundary and withSuspense for simplicity in this example
 export default Popup;

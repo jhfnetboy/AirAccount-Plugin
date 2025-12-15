@@ -9,7 +9,12 @@ export const auth = betterAuth({
     provider: 'sqlite',
     schema: schema,
   }),
-  plugins: [passkey()],
+  plugins: [
+    passkey({
+      rpID: 'ldkhlgkhgnlogoibbdgndgjhangpgfje', // Replace with your actual extension ID if dynamic is not working
+      origin: 'chrome-extension://ldkhlgkhgnlogoibbdgndgjhangpgfje',
+    }),
+  ],
   user: {
     additionalFields: {
       web3AccountAddress: {
@@ -18,4 +23,6 @@ export const auth = betterAuth({
       },
     },
   },
+  debug: true,
+  trustedOrigins: ['chrome-extension://', 'http://localhost:3000'],
 });

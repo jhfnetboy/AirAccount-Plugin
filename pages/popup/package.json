@@ -20,11 +20,13 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@better-auth/passkey": "^1.4.7",
     "@extension/i18n": "workspace:*",
     "@extension/shared": "workspace:*",
     "@extension/storage": "workspace:*",
     "@extension/ui": "workspace:*",
-    "@simplewebauthn/browser": "^13.2.2"
+    "@simplewebauthn/browser": "^13.2.2",
+    "better-auth": "^1.4.7"
   },
   "devDependencies": {
     "@extension/tailwindcss-config": "workspace:*",

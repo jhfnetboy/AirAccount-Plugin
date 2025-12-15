@@ -11,3 +11,4 @@ onlyBuiltDependencies:
   - esbuild
   - geckodriver
   - unrs-resolver
+  - better-sqlite3

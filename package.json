@@ -36,7 +36,8 @@
     "set-global-env": "bash bash-scripts/set_global_env.sh",
     "module-manager": "pnpm -F module-manager start",
     "postinstall": "pnpm copy-env",
-    "dev:fake-api": "pnpm -F @extension/fake-api-server start"
+    "dev:fake-api": "pnpm -F @extension/fake-api-server start",
+    "start-dev": "./start-dev.sh"
   },
   "dependencies": {
     "react": "^19.1.0",
@@ -83,7 +84,8 @@
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.32.1",
     "vite": "^6.3.6",
-    "vite-plugin-node-polyfills": "^0.23.0"
+    "vite-plugin-node-polyfills": "^0.23.0",
+    "wait-on": "^9.0.3"
   },
   "lint-staged": {
     "*.{js,jsx,ts,tsx,json}": [

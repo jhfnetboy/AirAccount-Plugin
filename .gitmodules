@@ -4,3 +4,6 @@
 [submodule "lib/better-auth"]
 	path = lib/better-auth
 	url = https://github.com/better-auth/better-auth
+[submodule "submodules/SimpleWebAuthn"]
+	path = submodules/SimpleWebAuthn
+	url = https://github.com/MasterKale/SimpleWebAuthn.git

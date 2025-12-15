@@ -1,63 +1,98 @@
 import '@src/Popup.css';
-import { t } from '@extension/i18n';
-import { PROJECT_URL_OBJECT, useStorage, withErrorBoundary, withSuspense } from '@extension/shared';
-import { exampleThemeStorage } from '@extension/storage';
-import { cn, ErrorDisplay, LoadingSpinner, ToggleButton } from '@extension/ui';
+import { useState } from 'react';
+import { startRegistration } from '@simplewebauthn/browser';
 
-const notificationOptions = {
-  type: 'basic',
-  iconUrl: chrome.runtime.getURL('icon-34.png'),
-  title: 'Injecting content script error',
-  message: 'You cannot inject script here!',
-} as const;
+const FAKE_API_URL = 'http://localhost:8088';
 
 const Popup = () => {
-  const { isLight } = useStorage(exampleThemeStorage);
-  const logo = isLight ? 'popup/logo_vertical.svg' : 'popup/logo_vertical_dark.svg';
+  const [status, setStatus] = useState('');
 
-  const goGithubSite = () => chrome.tabs.create(PROJECT_URL_OBJECT);
+  const handleRegister = async () => {
+    setStatus('Starting registration...');
 
-  const injectContentScript = async () => {
-    const [tab] = await chrome.tabs.query({ currentWindow: true, active: true });
+    // A fake user ID for demonstration purposes
+    const userId = `user_${Date.now()}`;
+    const username = `${userId}@example.com`;
 
-    if (tab.url!.startsWith('about:') || tab.url!.startsWith('chrome:')) {
-      chrome.notifications.create('inject-error', notificationOptions);
-    }
-
-    await chrome.scripting
-      .executeScript({
-        target: { tabId: tab.id! },
-        files: ['/content-runtime/example.iife.js', '/content-runtime/all.iife.js'],
-      })
-      .catch(err => {
-        // Handling errors related to other paths
-        if (err.message.includes('Cannot access a chrome:// URL')) {
-          chrome.notifications.create('inject-error', notificationOptions);
-        }
+    try {
+      // 1. Get registration options from the server
+      const rpID = chrome?.runtime?.id || 'localhost';
+      console.log('Sending rpID:', rpID);
+      const resp = await fetch(`${FAKE_API_URL}/api/v1/auth/register-challenge`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ userId, username, rpID }),
       });
+
+      if (!resp.ok) {
+        const errorText = await resp.text();
+        let errorMessage = `Failed to get challenge: ${resp.status} ${resp.statusText}`;
+        try {
+          const errorJson = JSON.parse(errorText);
+          if (errorJson.error) errorMessage += ` - ${errorJson.error}`;
+        } catch {
+          errorMessage += ` - ${errorText}`;
+        }
+        throw new Error(errorMessage);
+      }
+
+      const options = await resp.json();
+      console.log('Registration options full:', options);
+      console.log('RP options:', options.rp);
+
+      // Allow browser to determine the RP ID from the context
+      // This helps avoid mismatches if the extension ID format differs
+      const rpId = options.rp.id;
+      delete options.rp.id;
+
+      setStatus('Got challenge, awaiting user interaction...');
+
+      // 2. Start WebAuthn registration
+      const attestation = await startRegistration({ optionsJSON: options });
+      setStatus('User interaction complete, verifying...');
+
+      // 3. Send attestation to server for verification
+      const verificationResp = await fetch(`${FAKE_API_URL}/api/v1/auth/register-verify`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ userId, cred: attestation }),
+      });
+
+      const verificationJSON = await verificationResp.json();
+
+      if (verificationJSON && verificationJSON.verified) {
+        setStatus(
+          `✅ Registration successful! User: ${verificationJSON.user.id}, Address: ${verificationJSON.user.web3_account_address}`,
+        );
+      } else {
+        throw new Error(`Verification failed: ${verificationJSON.error || 'Unknown error'}`);
+      }
+    } catch (error: any) {
+      setStatus(`❌ Error: ${error.message}`);
+      console.error(error);
+    }
   };
 
   return (
-    <div className={cn('App', isLight ? 'bg-slate-50' : 'bg-gray-800')}>
-      <header className={cn('App-header', isLight ? 'text-gray-900' : 'text-gray-100')}>
-        <button onClick={goGithubSite}>
-          <img src={chrome.runtime.getURL(logo)} className="App-logo" alt="logo" />
-        </button>
-        <p>
-          Edit <code>pages/popup/src/Popup.tsx</code>
-        </p>
+    <div className="min-w-[300px] bg-gray-800 p-4 text-white">
+      <header className="flex flex-col items-center">
+        <h1 className="mb-4 text-xl font-bold">Passkey Demo</h1>
         <button
-          className={cn(
-            'mt-4 rounded px-4 py-1 font-bold shadow hover:scale-105',
-            isLight ? 'bg-blue-200 text-black' : 'bg-gray-700 text-white',
-          )}
-          onClick={injectContentScript}>
-          {t('injectButton')}
+          className="rounded bg-blue-500 px-4 py-2 font-bold text-white hover:bg-blue-700"
+          onClick={handleRegister}>
+          Register with Passkey
         </button>
-        <ToggleButton>{t('toggleTheme')}</ToggleButton>
+        <div className="mt-4 min-h-[50px] w-full rounded bg-gray-700 p-2 text-center">
+          <p className="break-words text-sm">{status}</p>
+        </div>
       </header>
     </div>
   );
 };
 
-export default withErrorBoundary(withSuspense(Popup, <LoadingSpinner />), ErrorDisplay);
+// We are removing the withErrorBoundary and withSuspense for simplicity in this example
+export default Popup;

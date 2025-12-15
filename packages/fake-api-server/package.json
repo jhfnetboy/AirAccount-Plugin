@@ -2,6 +2,7 @@
   "name": "@extension/fake-api-server",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "description": "A fake API server for frontend development, simulating the real backend.",
   "main": "index.js",
   "scripts": {

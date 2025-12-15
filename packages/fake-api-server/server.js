@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import fs from 'fs/promises';
+import { Buffer } from 'node:buffer';
 import {
   generateRegistrationOptions,
   verifyRegistrationResponse,
@@ -9,7 +10,7 @@ import {
 } from '@simplewebauthn/server';
 
 const app = express();
-const port = 3001;
+const port = 8088;
 
 app.use(cors());
 app.use(express.json());
@@ -44,12 +45,19 @@ async function writeDB(data) {
   await fs.writeFile('./db.json', JSON.stringify(data, null, 2));
 }
 
+app.get('/', (req, res) => {
+  res.status(200).json({ status: 'ok', message: 'Fake API server is running' });
+});
+
 app.post('/api/v1/auth/register-challenge', async (req, res) => {
-  const { userId, username } = req.body;
+  const { userId, username, rpID: clientRpID } = req.body;
 
   if (!userId || !username) {
     return res.status(400).json({ error: 'userId and username are required' });
   }
+
+  const effectiveRpID = clientRpID || rpID;
+  console.log('Generating registration options with rpID:', effectiveRpID);
 
   const db = await readDB();
   const user = db.users.find(u => u.id === userId);
@@ -59,9 +67,9 @@ app.post('/api/v1/auth/register-challenge', async (req, res) => {
   }
 
   const registrationOptions = await generateRegistrationOptions({
-    rpID,
+    rpID: effectiveRpID,
     rpName: 'Passkey Demo',
-    userID: userId,
+    userID: new Uint8Array(Buffer.from(userId)),
     userName: username,
     attestationType: 'none',
     authenticatorSelection: {
@@ -70,8 +78,8 @@ app.post('/api/v1/auth/register-challenge', async (req, res) => {
     },
   });
 
-  // Store challenge
-  db.challenges[userId] = registrationOptions.challenge;
+  // Store challenge and rpID
+  db.challenges[userId] = { challenge: registrationOptions.challenge, rpID: effectiveRpID };
   await writeDB(db);
 
   res.json(registrationOptions);
@@ -85,19 +93,50 @@ app.post('/api/v1/auth/register-verify', async (req, res) => {
   }
 
   const db = await readDB();
-  const expectedChallenge = db.challenges[userId];
+  const challengeData = db.challenges[userId];
 
-  if (!expectedChallenge) {
+  if (!challengeData) {
     return res.status(400).send({ error: 'Challenge not found for user' });
   }
 
+  const { challenge: expectedChallenge, rpID: expectedRPID } = challengeData;
+
+  console.log('Verifying registration:', { userId, expectedRPID });
+
+  const origin = req.get('origin');
+  const isAllowedOrigin = origin && (origin.startsWith('chrome-extension://') || origin.startsWith('http://localhost'));
+
+  if (!isAllowedOrigin) {
+    return res.status(400).send({ error: `Invalid origin: ${origin}` });
+  }
+
   try {
-    const verification = await verifyRegistrationResponse({
-      response: cred,
-      expectedChallenge: expectedChallenge,
-      expectedOrigin: origin,
-      expectedRPID: rpID,
-    });
+    const expectedOrigin = origin => {
+      return origin.startsWith('chrome-extension://') || origin.startsWith('http://localhost');
+    };
+
+    let verification;
+    try {
+      verification = await verifyRegistrationResponse({
+        response: cred,
+        expectedChallenge: expectedChallenge,
+        expectedOrigin: origin,
+        expectedRPID: expectedRPID,
+      });
+    } catch (e) {
+      if (e.message.includes('Unexpected RP ID hash')) {
+        console.log('Retrying verification with prefixed RP ID...');
+        // Try with chrome-extension:// prefix
+        verification = await verifyRegistrationResponse({
+          response: cred,
+          expectedChallenge: expectedChallenge,
+          expectedOrigin: origin,
+          expectedRPID: `chrome-extension://${expectedRPID}`,
+        });
+      } else {
+        throw e;
+      }
+    }
 
     const { verified, registrationInfo } = verification;
 
@@ -177,6 +216,13 @@ app.post('/api/v1/auth/login-verify', async (req, res) => {
 
   if (!authenticator) {
     return res.status(400).send({ error: 'Authenticator not recognized' });
+  }
+
+  const origin = req.get('origin');
+  const isAllowedOrigin = origin && (origin.startsWith('chrome-extension://') || origin.startsWith('http://localhost'));
+
+  if (!isAllowedOrigin) {
+    return res.status(400).send({ error: `Invalid origin: ${origin}` });
   }
 
   try {

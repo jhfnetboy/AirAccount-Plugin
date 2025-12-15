@@ -5,6 +5,9 @@ const rootDir = resolve(import.meta.dirname);
 const srcDir = resolve(rootDir, 'src');
 
 export default withPageConfig({
+  server: {
+    port: 3000,
+  },
   resolve: {
     alias: {
       '@src': srcDir,

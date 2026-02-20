@@ -31,7 +31,16 @@ const manifest = {
   version: packageJson.version,
   description: '__MSG_extensionDescription__',
   host_permissions: ['<all_urls>'],
-  permissions: ['storage', 'scripting', 'tabs', 'notifications', 'sidePanel'],
+  permissions: ['storage', 'scripting', 'tabs', 'notifications', 'sidePanel', 'declarativeNetRequest', 'webNavigation'],
+  declarative_net_request: {
+    rule_resources: [
+      {
+        id: 'forest',
+        enabled: true,
+        path: 'forest.rules.json',
+      },
+    ],
+  },
   options_page: 'options/index.html',
   background: {
     service_worker: 'background.js',

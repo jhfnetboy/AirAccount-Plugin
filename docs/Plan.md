@@ -423,3 +423,135 @@ The milestones below assume we extend the existing structure rather than introdu
 3. Milestone 3 → render safe templates + cache
 4. Milestone 4 → ship a usable MVP UX
 5. Milestones 5–7 → scale, gasless UX, and distribution
+
+---
+
+## 中文版本（面向所有人可读）
+
+本仓库当前是一个 Chrome 扩展模板工程。目标产品（见 [Solution.md](file:///Volumes/UltraDisk/Dev2/aastar/AirAccount-Plugin/docs/Solution.md)）是一个“本地网关（Local Gateway）”，让普通 Chrome 在安装扩展后，就像原生支持如下能力一样：
+
+- 域名命名空间：`*.forest.mushroom.box`
+- 链上名称系统（ENS 风格）解析
+- IPFS（或兼容网关）内容分发
+
+扩展会拦截匹配域名的访问请求，在本地通过 RPC 解析链上记录、通过 IPFS 网关获取内容，并使用扩展自身代码安全渲染页面（满足 Chrome Web Store / MV3 要求）。对于未安装扩展的用户，可选提供 Web2 兜底网关。
+
+### 背景
+
+核心思路是把“解析 + 渲染”的能力放到用户浏览器本地，而不是依赖中心化网关（类似 `eth.limo` 的服务端解析）。扩展扮演翻译层：
+
+`sunflower.forest.mushroom.box` → 链上解析记录（Resolver 输出）→ 内容地址（contenthash / IPFS CID）→ 本地确定性渲染页面
+
+希望同时满足：
+
+- 可用性：任一可用 RPC + 任一可用 IPFS 网关即可访问
+- 主权性：用户可拥有/更新子域名内容（直接上链或签名委托）
+- 传播性：Web2 链接分享给未装扩展用户，也不至于“死链”
+
+### 产品目标
+
+- 安装扩展后，`*.forest.mushroom.box` 在 Chrome 中“直接可用”
+- 渲染方案满足 Chrome Web Store / Manifest V3 安全要求
+- 扩展内置完整用户路径：
+  - RPC / IPFS 网关配置
+  - 注册（申请子域名）
+  - 管理（更新主页字段与内容指针）
+- 通过缓存降低 RPC/IPFS 延迟与限流影响
+
+### v0 非目标
+
+- 不在扩展高权限上下文中执行从 IPFS 拉取的远程 HTML/JS（避免远程代码执行）
+- 不做通用 `.eth` 浏览器，范围聚焦 Mushroom Forest 命名空间
+- 不在 v0 完成复杂反女巫身份体系（先用轻量风控/配额）
+
+### 关键约束（来自 Solution.md）
+
+- MV3 + Web Store 对“远程代码执行”非常敏感：不要把 IPFS 的 HTML/JS 当成可执行代码加载
+- 推荐“内置模板 + 远程数据（JSON/Markdown/图片）”的渲染模式
+- 若要支持未安装扩展用户，必须做 `*.forest.mushroom.box` 的泛解析（否则用户会先遇到 DNS 失败，网关都接不到请求）
+- 公共 RPC / 公共 IPFS 网关会限流：必须有缓存与可配置端点
+
+### 方案设计（系统设计）
+
+#### 总体架构
+
+```
+用户访问: https://<name>.forest.mushroom.box/...
+        |
+        | (A) 已安装扩展
+        v
+Chrome MV3 扩展
+  - 访问拦截（DNR）
+  - 渲染页（扩展页面）
+  - 链上解析客户端（RPC）
+  - 内容获取（IPFS 网关）
+  - 缓存（storage / 本地索引缓存）
+  - 控制台（注册 / 管理）
+        |
+        | RPC 调用 + IPFS 获取
+        v
+RPC 节点 / IPFS 网关
+        |
+        |（可选：免 Gas）
+        v
+中继/控制器服务（验签、风控、发交易）
+
+        | (B) 未安装扩展
+        v
+泛解析 DNS -> Web2 兜底网关（安装引导 / 可选中心化渲染预览）
+```
+
+#### 核心组件与职责
+
+- 访问拦截（MV3 / DNR）
+  - 目标：装了扩展后访问不依赖公网 DNS/HTTP
+  - 手段：对 `main_frame` 匹配 `*.forest.mushroom.box` 做重定向到扩展渲染页
+- 渲染器（安全组装页面）
+  - 输入：原始 URL、链上解析结果、IPFS 数据、缓存
+  - 输出：使用扩展内置模板渲染的页面
+  - 规则：只把远程内容当数据，不执行远程脚本
+- 解析客户端（RPC）
+  - 目标：`name -> records`
+  - 能力：namehash/规范化、resolver 查找、读取 `contenthash` 与必要 text records
+  - 需求：端点可配置、并发/超时/重试、错误可解释
+- 内容获取（IPFS 网关）
+  - 目标：按 CID 拉取允许类型内容（JSON/Markdown/图片）
+  - 需求：类型校验、大小限制、429/5xx 退避
+- 缓存
+  - 目标：降低延迟与公共基础设施限流风险
+  - 最小策略：resolver 结果按 TTL 缓存；IPFS payload 按 CID 缓存
+- 扩展控制台（Dashboard）
+  - 目标：把注册/管理闭环放在扩展内部完成
+  - 功能：配置、注册、编辑、发布、上链更新
+- 可选：中继/控制器（免 Gas）
+  - 目标：用户“只签名”，服务端代发交易
+  - 职责：验签、风控/配额、提交交易、回传状态
+- 可选：Web2 兜底网关（未装扩展）
+  - 目标：避免“点击即 DNS 失败”
+  - 依赖：`*.forest.mushroom.box` 泛解析到网关
+
+#### 数据模型（概念）
+
+- ForestName：`hostname / label / parent / path`
+- ResolvedRecords：`node / resolver / contenthash / texts / timestamp`
+- ContentBundle：`cid / type / payload`
+- RenderedViewState：`name / records / bundle / errors`
+
+#### 关键流程
+
+- 访问（已装扩展）
+  - 拦截重定向 → 读取原始 URL → 查缓存 → RPC 解析 → IPFS 拉取 → 内置模板渲染 → 写缓存
+- 访问（未装扩展）
+  - 泛解析命中网关 → 返回安装引导页（可选中心化渲染预览并明确提示）
+- 注册
+  - 扩展控制台提交 → 直接上链或签名提交给中继 → 注册完成后展示域名与记录
+- 更新
+  - 扩展内编辑 → 发布允许类型内容到 IPFS → 更新链上指针（直发或中继）→ 刷新/失效缓存
+
+### 关键风险（技术与体验）
+
+- Web Store 审核：远程代码执行/动态注入风险必须规避（内置模板 + 远程数据）
+- 未做泛解析时的“死胡同”：DNS 失败会让网关无法介入
+- 公共 RPC/IPFS 限流：必须缓存 + 端点可配置
+- 信任边界不清：如果有中心化兜底渲染，必须显式披露，避免误导
+- 免 Gas 的密钥风险：单一 EOA 是高风险点，后续可演进到更安全的账户模型

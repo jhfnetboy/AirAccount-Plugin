@@ -1,4 +1,4 @@
-import { buildForestUpdateTextTypedData } from '../../packages/shared/lib/utils/forest-typed-data';
+import { buildForestUpdateTextTypedData } from '../../packages/shared/lib/utils/forest-typed-data.js';
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 

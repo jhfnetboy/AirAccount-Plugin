@@ -1,4 +1,4 @@
-import { cacheGet, cacheSet } from '../../pages/renderer/src/cache';
+import { cacheGet, cacheSet } from '../../pages/renderer/src/cache.js';
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 
@@ -17,7 +17,8 @@ const createChromeStorageStub = (store: LocalStore) => ({
 
 test('cacheGet/cacheSet roundtrip within TTL', async () => {
   const store: LocalStore = {};
-  globalThis.chrome = createChromeStorageStub(store);
+  (globalThis as unknown as { chrome: ReturnType<typeof createChromeStorageStub> }).chrome =
+    createChromeStorageStub(store);
 
   await cacheSet(['k', 1], { ok: true });
   const value = await cacheGet<{ ok: boolean }>(['k', 1], 60);
@@ -26,7 +27,8 @@ test('cacheGet/cacheSet roundtrip within TTL', async () => {
 
 test('cacheGet returns null when expired', async () => {
   const store: LocalStore = {};
-  globalThis.chrome = createChromeStorageStub(store);
+  (globalThis as unknown as { chrome: ReturnType<typeof createChromeStorageStub> }).chrome =
+    createChromeStorageStub(store);
 
   await cacheSet(['k', 2], { ok: true });
 

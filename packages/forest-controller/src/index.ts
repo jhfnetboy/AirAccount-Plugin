@@ -136,9 +136,79 @@ const namehash = (name: string) => {
   return `0x${bytesToHex(node)}` as `0x${string}`;
 };
 
+const FOREST_SUFFIX = 'forest.mushroom.box';
+
 const isAddress = (value: string) => /^0x[a-fA-F0-9]{40}$/.test(value);
 const isBytes32 = (value: string) => /^0x[a-fA-F0-9]{64}$/.test(value);
 const isSignature = (value: string) => /^0x[a-fA-F0-9]{130}$/.test(value);
+
+const escapeHtml = (value: string) =>
+  value.replace(/[&<>"']/g, c => {
+    if (c === '&') return '&amp;';
+    if (c === '<') return '&lt;';
+    if (c === '>') return '&gt;';
+    if (c === '"') return '&quot;';
+    return '&#39;';
+  });
+
+const sendHtml = (res: ServerResponse, status: number, html: string) => {
+  res.writeHead(status, {
+    'content-type': 'text/html; charset=utf-8',
+    'cache-control': 'no-store',
+  });
+  res.end(html);
+};
+
+const getHostname = (req: IncomingMessage) => {
+  const raw = typeof req.headers.host === 'string' ? req.headers.host : '';
+  const host = raw.includes(':') ? raw.slice(0, raw.indexOf(':')) : raw;
+  return host.trim().toLowerCase();
+};
+
+const isForestHost = (hostname: string) => hostname === FOREST_SUFFIX || hostname.endsWith(`.${FOREST_SUFFIX}`);
+
+const renderInstallPage = (hostname: string, installUrl: string, learnMoreUrl: string) => {
+  const safeHost = escapeHtml(hostname);
+  const safeInstallUrl = escapeHtml(installUrl);
+  const safeLearnMoreUrl = escapeHtml(learnMoreUrl);
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${safeHost} — Mushroom Forest</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; margin: 0; padding: 0; }
+      main { max-width: 720px; margin: 0 auto; padding: 40px 20px; }
+      h1 { font-size: 22px; margin: 0 0 12px; }
+      p { line-height: 1.5; margin: 0 0 12px; opacity: 0.9; }
+      code { padding: 2px 6px; border-radius: 6px; background: rgba(127,127,127,0.15); }
+      .card { border: 1px solid rgba(127,127,127,0.35); border-radius: 12px; padding: 16px; margin-top: 16px; }
+      .actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
+      a.button { display: inline-block; padding: 10px 14px; border-radius: 10px; text-decoration: none; border: 1px solid rgba(127,127,127,0.45); }
+      a.primary { background: rgba(34, 197, 94, 0.15); border-color: rgba(34, 197, 94, 0.55); }
+      footer { margin-top: 28px; opacity: 0.75; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Mushroom Forest</h1>
+      <p>You tried to visit <code>${safeHost}</code>.</p>
+      <div class="card">
+        <p>This domain is designed to be rendered locally by the Mushroom Forest browser extension.</p>
+        <p>Install the extension to resolve onchain records and fetch IPFS content safely in your browser.</p>
+        <div class="actions">
+          <a class="button primary" href="${safeInstallUrl}" rel="noreferrer">Install extension</a>
+          <a class="button" href="${safeLearnMoreUrl}" rel="noreferrer">Learn more</a>
+        </div>
+      </div>
+      <footer>Gateway fallback page (no extension detected).</footer>
+    </main>
+  </body>
+</html>`;
+};
 
 const json = (res: ServerResponse, status: number, data: unknown) => {
   const body = JSON.stringify(data);
@@ -205,34 +275,68 @@ const resolverAbi = [
 ] as const;
 
 const main = () => {
-  const port = Number(process.env.FOREST_RELAYER_PORT || 8787);
+  const port = Number(process.env.FOREST_GATEWAY_PORT || process.env.FOREST_RELAYER_PORT || 8787);
   const privateKey = (process.env.FOREST_RELAYER_PRIVATE_KEY || '').trim();
   const rpcUrl = (process.env.FOREST_RELAYER_RPC_URL || '').trim();
   const envChainId = (process.env.FOREST_RELAYER_CHAIN_ID || '').trim();
   const envResolver = (process.env.FOREST_RELAYER_RESOLVER_ADDRESS || '').trim();
 
-  if (!/^0x[a-fA-F0-9]{64}$/.test(privateKey)) throw new Error('FOREST_RELAYER_PRIVATE_KEY must be 0x + 64 hex');
-  if (!/^https?:\/\/.+/i.test(rpcUrl)) throw new Error('FOREST_RELAYER_RPC_URL must be an http(s) URL');
-  if (envChainId && !/^\d+$/.test(envChainId)) throw new Error('FOREST_RELAYER_CHAIN_ID must be an integer');
-  if (envResolver && !isAddress(envResolver)) throw new Error('FOREST_RELAYER_RESOLVER_ADDRESS must be an address');
+  const installUrl = (process.env.FOREST_INSTALL_URL || '').trim() || 'https://github.com/jhfnetboy/AirAccount-Plugin';
+  const learnMoreUrl =
+    (process.env.FOREST_LEARN_MORE_URL || '').trim() || 'https://github.com/jhfnetboy/AirAccount-Plugin';
 
-  const account = privateKeyToAccount(privateKey as `0x${string}`);
+  const hasRelayerEnv = Boolean(privateKey || rpcUrl || envChainId || envResolver);
+  const relayerEnabled = Boolean(privateKey && rpcUrl);
+  if (hasRelayerEnv && !relayerEnabled)
+    throw new Error('FOREST_RELAYER_PRIVATE_KEY and FOREST_RELAYER_RPC_URL must be set together');
+
+  if (relayerEnabled) {
+    if (!/^0x[a-fA-F0-9]{64}$/.test(privateKey)) throw new Error('FOREST_RELAYER_PRIVATE_KEY must be 0x + 64 hex');
+    if (!/^https?:\/\/.+/i.test(rpcUrl)) throw new Error('FOREST_RELAYER_RPC_URL must be an http(s) URL');
+    if (envChainId && !/^\d+$/.test(envChainId)) throw new Error('FOREST_RELAYER_CHAIN_ID must be an integer');
+    if (envResolver && !isAddress(envResolver)) throw new Error('FOREST_RELAYER_RESOLVER_ADDRESS must be an address');
+  }
+
+  const account = relayerEnabled ? privateKeyToAccount(privateKey as `0x${string}`) : null;
   const chainId = envChainId ? Number(envChainId) : 10;
-
-  const chain = {
-    id: chainId,
-    name: 'ForestChain',
-    nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
-    rpcUrls: { default: { http: [rpcUrl] } },
-  } as const;
-
-  const walletClient = createWalletClient({
-    account,
-    chain,
-    transport: http(rpcUrl),
-  });
+  const chain =
+    relayerEnabled && account
+      ? ({
+          id: chainId,
+          name: 'ForestChain',
+          nativeCurrency: { name: 'Ether', symbol: 'ETH', decimals: 18 },
+          rpcUrls: { default: { http: [rpcUrl] } },
+        } as const)
+      : null;
+  const walletClient =
+    relayerEnabled && account && chain
+      ? createWalletClient({
+          account,
+          chain,
+          transport: http(rpcUrl),
+        })
+      : null;
 
   const server = createServer(async (req, res) => {
+    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+
+    if (req.method === 'GET') {
+      if (url.pathname === '/healthz') {
+        res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
+        res.end('ok');
+        return;
+      }
+
+      const hostname = getHostname(req);
+      if (!hostname || !isForestHost(hostname)) {
+        sendHtml(res, 404, '<!doctype html><title>Not Found</title><h1>Not Found</h1>');
+        return;
+      }
+
+      sendHtml(res, 200, renderInstallPage(hostname, installUrl, learnMoreUrl));
+      return;
+    }
+
     if (req.method === 'OPTIONS') {
       res.writeHead(204, {
         'access-control-allow-origin': '*',
@@ -243,8 +347,12 @@ const main = () => {
       return;
     }
 
-    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
     if (req.method !== 'POST' || url.pathname !== '/v1/forest/update-text') {
+      json(res, 404, { error: 'not_found' });
+      return;
+    }
+
+    if (!relayerEnabled || !account || !walletClient) {
       json(res, 404, { error: 'not_found' });
       return;
     }

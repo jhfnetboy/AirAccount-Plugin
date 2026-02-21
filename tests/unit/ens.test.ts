@@ -1,4 +1,4 @@
-import { keccak256, namehash } from '../../pages/renderer/src/ens';
+import { keccak256, namehash } from '../../pages/renderer/src/ens.js';
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 

@@ -1,4 +1,4 @@
-import { ipfsUrl, parseIpfsPointer } from '../../pages/renderer/src/ipfs';
+import { ipfsUrl, parseIpfsPointer } from '../../pages/renderer/src/ipfs.js';
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 

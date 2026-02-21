@@ -1,4 +1,5 @@
 import '@src/Renderer.css';
+import { cacheGet, cacheSet } from './cache';
 import {
   decodeAbiBytes,
   decodeAbiString,
@@ -8,6 +9,7 @@ import {
   namehash,
 } from './ens';
 import { ethCall } from './eth-rpc';
+import { fetchIpfsBundle, parseIpfsPointer } from './ipfs';
 import { useStorage, withErrorBoundary, withSuspense } from '@extension/shared';
 import { exampleThemeStorage, forestSettingsStorage } from '@extension/storage';
 import { cn, ErrorDisplay, LoadingSpinner, ToggleButton } from '@extension/ui';
@@ -15,17 +17,33 @@ import { useEffect, useMemo, useState } from 'react';
 
 type OriginalUrlResponse = { ok: true; url: string } | { ok: false; error: string };
 
+type ResolvedState = {
+  node: string;
+  contenthash: string | null;
+  texts: Record<string, string | null>;
+};
+
+type BundleState =
+  | { kind: 'none' }
+  | { kind: 'loading' }
+  | { kind: 'error'; error: string }
+  | {
+      kind: 'ready';
+      bundle:
+        | { kind: 'json'; cid: string; preview: string }
+        | { kind: 'markdown'; cid: string; preview: string }
+        | { kind: 'image'; cid: string; url: string }
+        | { kind: 'unknown'; cid: string; url: string; contentType: string | null };
+    };
+
 const Renderer = () => {
   const { isLight } = useStorage(exampleThemeStorage);
   const forestSettings = useStorage(forestSettingsStorage);
   const [originalUrl, setOriginalUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [resolveError, setResolveError] = useState<string | null>(null);
-  const [resolved, setResolved] = useState<{
-    node: string;
-    contenthash: string | null;
-    texts: Record<string, string | null>;
-  } | null>(null);
+  const [resolved, setResolved] = useState<ResolvedState | null>(null);
+  const [bundle, setBundle] = useState<BundleState>({ kind: 'none' });
 
   const parsed = useMemo(() => {
     if (!originalUrl) return null;
@@ -65,9 +83,12 @@ const Renderer = () => {
 
       setResolveError(null);
       setResolved(null);
+      setBundle({ kind: 'none' });
 
       const rpcUrl = forestSettings.rpcUrl.trim();
       const resolverAddress = forestSettings.resolverAddress.trim();
+      const cacheEnabled = forestSettings.cacheEnabled;
+      const cacheTtlSeconds = forestSettings.cacheTtlSeconds;
 
       if (!rpcUrl) {
         setResolveError('missing_rpc_url');
@@ -80,6 +101,17 @@ const Renderer = () => {
 
       try {
         const node = namehash(parsed.hostname);
+
+        if (cacheEnabled) {
+          const cachedResolved = await cacheGet<ResolvedState>(
+            ['resolver', rpcUrl, resolverAddress, node],
+            cacheTtlSeconds,
+          );
+          if (cachedResolved) {
+            setResolved(cachedResolved);
+          }
+        }
+
         const contenthashResult = await ethCall(rpcUrl, {
           to: resolverAddress,
           data: encodeContenthashCall(node),
@@ -97,14 +129,90 @@ const Renderer = () => {
           texts[key] = decodeAbiString(r);
         }
 
-        setResolved({ node, contenthash, texts });
+        const nextResolved: ResolvedState = { node, contenthash, texts };
+        setResolved(nextResolved);
+
+        if (cacheEnabled) {
+          await cacheSet(['resolver', rpcUrl, resolverAddress, node], nextResolved);
+        }
       } catch (e) {
         setResolveError(e instanceof Error ? e.message : 'resolve_failed');
       }
     };
 
     void run();
-  }, [forestSettings.resolverAddress, forestSettings.rpcUrl, parsed?.hostname]);
+  }, [
+    forestSettings.cacheEnabled,
+    forestSettings.cacheTtlSeconds,
+    forestSettings.resolverAddress,
+    forestSettings.rpcUrl,
+    parsed?.hostname,
+  ]);
+
+  useEffect(() => {
+    const run = async () => {
+      if (!parsed?.hostname) return;
+      if (!resolved) return;
+
+      const cacheEnabled = forestSettings.cacheEnabled;
+      const cacheTtlSeconds = forestSettings.cacheTtlSeconds;
+      const gatewayBase = forestSettings.ipfsGatewayUrl;
+
+      const content = resolved.texts.content;
+      const pointer = content ? parseIpfsPointer(content) : null;
+      if (!pointer) {
+        setBundle({ kind: 'none' });
+        return;
+      }
+
+      if (cacheEnabled) {
+        const cached = await cacheGet<BundleState>(['ipfs', gatewayBase, pointer.cid, pointer.path], cacheTtlSeconds);
+        if (cached && cached.kind === 'ready') {
+          setBundle(cached);
+        }
+      }
+
+      try {
+        setBundle({ kind: 'loading' });
+        const fetched = await fetchIpfsBundle(gatewayBase, pointer);
+
+        const next: BundleState =
+          fetched.kind === 'json'
+            ? {
+                kind: 'ready',
+                bundle: {
+                  kind: 'json',
+                  cid: fetched.cid,
+                  preview: JSON.stringify(fetched.json, null, 2).slice(0, 50_000),
+                },
+              }
+            : fetched.kind === 'markdown'
+              ? {
+                  kind: 'ready',
+                  bundle: { kind: 'markdown', cid: fetched.cid, preview: fetched.text.slice(0, 50_000) },
+                }
+              : fetched.kind === 'image'
+                ? { kind: 'ready', bundle: { kind: 'image', cid: fetched.cid, url: fetched.url } }
+                : { kind: 'ready', bundle: fetched };
+
+        setBundle(next);
+
+        if (cacheEnabled) {
+          await cacheSet(['ipfs', gatewayBase, pointer.cid, pointer.path], next);
+        }
+      } catch (e) {
+        setBundle({ kind: 'error', error: e instanceof Error ? e.message : 'ipfs_failed' });
+      }
+    };
+
+    void run();
+  }, [
+    forestSettings.cacheEnabled,
+    forestSettings.cacheTtlSeconds,
+    forestSettings.ipfsGatewayUrl,
+    parsed?.hostname,
+    resolved,
+  ]);
 
   const openOptions = () => chrome.runtime.openOptionsPage();
 
@@ -140,6 +248,28 @@ const Renderer = () => {
                       <code>{k}</code>: <code className={cn('break-all')}>{v ?? '(missing)'}</code>
                     </div>
                   ))}
+                </div>
+                <div className={cn('mt-4 space-y-2')}>
+                  <div className={cn('text-lg font-semibold')}>Template</div>
+                  {bundle.kind === 'none' ? (
+                    <div className={cn('text-sm opacity-70')}>No content pointer set (text record: content)</div>
+                  ) : bundle.kind === 'loading' ? (
+                    <div className={cn('text-sm opacity-70')}>Fetching IPFS…</div>
+                  ) : bundle.kind === 'error' ? (
+                    <div>
+                      Error: <code>{bundle.error}</code>
+                    </div>
+                  ) : bundle.bundle.kind === 'image' ? (
+                    <img src={bundle.bundle.url} className={cn('max-w-full rounded border')} alt="ipfs" />
+                  ) : bundle.bundle.kind === 'json' ? (
+                    <pre className={cn('whitespace-pre-wrap rounded border p-3 text-xs')}>{bundle.bundle.preview}</pre>
+                  ) : bundle.bundle.kind === 'markdown' ? (
+                    <pre className={cn('whitespace-pre-wrap rounded border p-3 text-xs')}>{bundle.bundle.preview}</pre>
+                  ) : (
+                    <div>
+                      Unsupported: <code>{bundle.bundle.contentType ?? 'unknown'}</code>
+                    </div>
+                  )}
                 </div>
               </>
             ) : (

@@ -1,6 +1,12 @@
 import '@src/Options.css';
 import { t } from '@extension/i18n';
-import { PROJECT_URL_OBJECT, useStorage, withErrorBoundary, withSuspense } from '@extension/shared';
+import {
+  buildForestUpdateTextTypedData,
+  PROJECT_URL_OBJECT,
+  useStorage,
+  withErrorBoundary,
+  withSuspense,
+} from '@extension/shared';
 import { exampleThemeStorage, forestDashboardStorage, forestSettingsStorage } from '@extension/storage';
 import { cn, ErrorDisplay, LoadingSpinner, ToggleButton } from '@extension/ui';
 import { useMemo, useState } from 'react';
@@ -207,6 +213,10 @@ const Options = () => {
     kind: 'idle',
   });
   const [txStatus, setTxStatus] = useState<{ kind: 'idle' | 'success' | 'error'; message?: string }>({ kind: 'idle' });
+  const [relayerStatus, setRelayerStatus] = useState<{
+    kind: 'idle' | 'loading' | 'success' | 'error';
+    message?: string;
+  }>({ kind: 'idle' });
 
   const goGithubSite = () => chrome.tabs.create(PROJECT_URL_OBJECT);
 
@@ -338,6 +348,92 @@ const Options = () => {
     }
   };
 
+  const requestGaslessUpdate = async () => {
+    setRelayerStatus({ kind: 'loading' });
+    const eth = (window as unknown as { ethereum?: { request?: (args: unknown) => Promise<unknown> } }).ethereum;
+    if (!eth?.request) {
+      setRelayerStatus({ kind: 'error', message: 'no_wallet_provider' });
+      return;
+    }
+
+    const resolverAddress = forestSettings.resolverAddress.trim();
+    if (!/^0x[a-fA-F0-9]{40}$/.test(resolverAddress)) {
+      setRelayerStatus({ kind: 'error', message: 'invalid_resolver_address' });
+      return;
+    }
+
+    const relayerBaseUrl = forestSettings.relayerUrl.trim().replace(/\/$/, '');
+    if (!/^https?:\/\/.+/i.test(relayerBaseUrl)) {
+      setRelayerStatus({ kind: 'error', message: 'invalid_relayer_url' });
+      return;
+    }
+
+    const name = forestDashboard.draft.name.trim();
+    const pointer = forestDashboard.draft.contentPointer.trim();
+    if (!name || !pointer) {
+      setRelayerStatus({ kind: 'error', message: 'missing_name_or_pointer' });
+      return;
+    }
+
+    const accounts = (await eth.request({ method: 'eth_requestAccounts' })) as unknown;
+    const owner =
+      forestDashboard.selectedAddress ||
+      (Array.isArray(accounts) && typeof accounts[0] === 'string' ? accounts[0] : '');
+    if (!owner) {
+      setRelayerStatus({ kind: 'error', message: 'no_account' });
+      return;
+    }
+
+    const nonce = String(Date.now());
+    const deadline = String(Math.floor(Date.now() / 1000) + 10 * 60);
+    const typedData = buildForestUpdateTextTypedData({
+      chainId: forestSettings.chainId,
+      verifyingContract: resolverAddress as `0x${string}`,
+      owner: owner as `0x${string}`,
+      name,
+      key: 'content',
+      value: pointer,
+      nonce,
+      deadline,
+    });
+
+    const signParams = [owner, JSON.stringify(typedData)];
+    let signature = '';
+    try {
+      const signed = (await eth.request({ method: 'eth_signTypedData_v4', params: signParams })) as unknown;
+      signature = typeof signed === 'string' ? signed : '';
+    } catch {
+      try {
+        const signed = (await eth.request({ method: 'eth_signTypedData', params: signParams })) as unknown;
+        signature = typeof signed === 'string' ? signed : '';
+      } catch (e) {
+        setRelayerStatus({ kind: 'error', message: e instanceof Error ? e.message : 'sign_failed' });
+        return;
+      }
+    }
+
+    if (!/^0x[a-fA-F0-9]{130}$/.test(signature)) {
+      setRelayerStatus({ kind: 'error', message: 'invalid_signature' });
+      return;
+    }
+
+    try {
+      const response = await fetch(`${relayerBaseUrl}/v1/forest/update-text`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ typedData, signature }),
+      });
+      const json = (await response.json().catch(() => null)) as null | { txHash?: string; error?: string };
+      if (!response.ok) {
+        setRelayerStatus({ kind: 'error', message: json?.error || `relayer_http_${response.status}` });
+        return;
+      }
+      setRelayerStatus({ kind: 'success', message: json?.txHash || 'submitted' });
+    } catch (e) {
+      setRelayerStatus({ kind: 'error', message: e instanceof Error ? e.message : 'relayer_failed' });
+    }
+  };
+
   const preparedTx = useMemo(() => {
     const resolverAddress = forestSettings.resolverAddress.trim();
     const name = forestDashboard.draft.name.trim();
@@ -360,6 +456,23 @@ const Options = () => {
       </button>
       <div className={cn('mt-6 grid w-full max-w-xl gap-4')}>
         <div className={cn('text-lg font-semibold')}>Forest Settings</div>
+
+        <label className={cn('grid gap-1')}>
+          <div className={cn('text-sm opacity-70')}>Chain ID</div>
+          <input
+            type="number"
+            min={0}
+            className={cn(inputClassName, 'font-mono text-sm')}
+            value={forestSettings.chainId}
+            onChange={e =>
+              forestSettingsStorage.set(prev => ({
+                ...prev,
+                chainId: Number.isFinite(e.target.valueAsNumber) ? e.target.valueAsNumber : prev.chainId,
+              }))
+            }
+            placeholder="10"
+          />
+        </label>
 
         <label className={cn('grid gap-1')}>
           <div className={cn('text-sm opacity-70')}>RPC URL</div>
@@ -398,6 +511,16 @@ const Options = () => {
             value={forestSettings.ipfsApiUrl}
             onChange={e => forestSettingsStorage.set(prev => ({ ...prev, ipfsApiUrl: e.target.value }))}
             placeholder="http://127.0.0.1:5001"
+          />
+        </label>
+
+        <label className={cn('grid gap-1')}>
+          <div className={cn('text-sm opacity-70')}>Relayer URL (Gasless)</div>
+          <input
+            className={inputClassName}
+            value={forestSettings.relayerUrl}
+            onChange={e => forestSettingsStorage.set(prev => ({ ...prev, relayerUrl: e.target.value }))}
+            placeholder="http://127.0.0.1:8787"
           />
         </label>
 
@@ -533,6 +656,9 @@ const Options = () => {
             <ToggleButton onClick={sendSetContentTx} disabled={!preparedTx}>
               Set onchain content pointer
             </ToggleButton>
+            <ToggleButton onClick={requestGaslessUpdate} disabled={!preparedTx || relayerStatus.kind === 'loading'}>
+              Request gasless update
+            </ToggleButton>
           </div>
 
           {ipfsStatus.kind !== 'idle' ? (
@@ -569,6 +695,13 @@ const Options = () => {
               Fill resolver address, name, and content pointer to prepare a tx.
             </div>
           )}
+
+          {relayerStatus.kind !== 'idle' ? (
+            <div className={cn('text-sm')}>
+              Relayer: <code>{relayerStatus.kind}</code>{' '}
+              {relayerStatus.message ? <code>{relayerStatus.message}</code> : null}
+            </div>
+          ) : null}
         </div>
 
         <div className={cn('flex gap-2')}>

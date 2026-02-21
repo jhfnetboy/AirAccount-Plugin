@@ -1,0 +1,27 @@
+{
+  "name": "@extension/forest-controller",
+  "version": "0.5.0",
+  "description": "forest controller / relayer service",
+  "type": "module",
+  "private": true,
+  "sideEffects": false,
+  "scripts": {
+    "clean:bundle": "rimraf dist",
+    "clean:node_modules": "pnpx rimraf node_modules",
+    "clean:turbo": "rimraf .turbo",
+    "clean": "pnpm clean:bundle && pnpm clean:node_modules && pnpm clean:turbo",
+    "ready": "tsc -b",
+    "dev": "node --import tsx src/index.ts",
+    "lint": "eslint .",
+    "lint:fix": "pnpm lint --fix",
+    "format": "prettier . --write --ignore-path ../../.prettierignore",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@extension/shared": "workspace:*",
+    "viem": "^2.0.0"
+  },
+  "devDependencies": {
+    "@extension/tsconfig": "workspace:*"
+  }
+}

@@ -27,6 +27,7 @@
     "zip:firefox": "pnpm build:firefox && pnpm -F zipper zip",
     "e2e": "pnpm zip && turbo e2e",
     "e2e:firefox": "pnpm zip:firefox && turbo e2e",
+    "test:unit": "pnpm -F unit-tests test",
     "lint": "turbo lint --continue",
     "lint:fix": "turbo lint:fix --continue",
     "format": "turbo format --continue -- --cache --cache-location node_modules/.cache/.prettiercache",

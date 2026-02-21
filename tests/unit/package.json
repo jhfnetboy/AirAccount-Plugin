@@ -1,0 +1,12 @@
+{
+  "name": "@extension/unit-tests",
+  "version": "0.5.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --import tsx --test"
+  },
+  "devDependencies": {
+    "@extension/tsconfig": "workspace:*"
+  }
+}

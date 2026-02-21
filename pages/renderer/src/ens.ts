@@ -63,7 +63,7 @@ const keccakF1600 = (state: bigint[]) => {
         const lane = state[x + 5 * y];
         const newX = y;
         const newY = (2 * x + 3 * y) % 5;
-        b[newX + 5 * newY] = rotl64(lane, ROTATION_OFFSETS[y][x]);
+        b[newX + 5 * newY] = rotl64(lane, ROTATION_OFFSETS[x][y]);
       }
     }
 

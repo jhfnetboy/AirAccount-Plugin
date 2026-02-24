@@ -1,4 +1,16 @@
-const isProbablyCid = (value: string) => /^[a-zA-Z0-9]+$/.test(value) && value.length >= 40;
+const isCidV0Base58btc = (value: string) => {
+  if (value.length < 40 || value.length > 100) return false;
+  if (!/^[1-9A-HJ-NP-Za-km-z]+$/.test(value)) return false;
+  return value.startsWith('Qm');
+};
+
+const isCidV1Base32 = (value: string) => {
+  if (value.length < 50 || value.length > 200) return false;
+  if (!/^[a-z2-7]+$/.test(value)) return false;
+  return value.startsWith('b');
+};
+
+const isProbablyCid = (value: string) => isCidV0Base58btc(value) || isCidV1Base32(value);
 
 type IpfsPointer = { cid: string; path: string };
 
@@ -16,7 +28,10 @@ const parseIpfsPointer = (raw: string): IpfsPointer | null => {
     const withoutScheme = value.slice('ipfs://'.length);
     const [cid, ...rest] = withoutScheme.split('/');
     if (!cid || !isProbablyCid(cid)) return null;
-    const path = rest.length ? `/${rest.join('/')}` : '';
+    const pathRaw = rest.length ? rest.join('/') : '';
+    if (pathRaw.length > 2048) return null;
+    if (pathRaw.split('/').some(seg => seg === '..')) return null;
+    const path = pathRaw ? `/${pathRaw}` : '';
     return { cid, path };
   }
 
@@ -28,11 +43,23 @@ const parseIpfsPointer = (raw: string): IpfsPointer | null => {
 const normalizeGatewayBase = (base: string) => {
   const trimmed = base.trim();
   if (!trimmed) return 'https://cloudflare-ipfs.com/ipfs/';
-  return trimmed.endsWith('/') ? trimmed : `${trimmed}/`;
+  try {
+    const url = new URL(trimmed.endsWith('/') ? trimmed : `${trimmed}/`);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return 'https://cloudflare-ipfs.com/ipfs/';
+    return url.toString();
+  } catch {
+    return 'https://cloudflare-ipfs.com/ipfs/';
+  }
+};
+
+const encodeIpfsPath = (path: string) => {
+  if (!path) return '';
+  const parts = path.split('/');
+  return parts.map((p, i) => (i === 0 ? p : encodeURIComponent(p))).join('/');
 };
 
 const ipfsUrl = (gatewayBase: string, pointer: IpfsPointer) =>
-  `${normalizeGatewayBase(gatewayBase)}${pointer.cid}${pointer.path}`;
+  `${normalizeGatewayBase(gatewayBase)}${pointer.cid}${encodeIpfsPath(pointer.path)}`;
 
 const fetchIpfsBundle = async (gatewayBase: string, pointer: IpfsPointer): Promise<AllowedBundle> => {
   const url = ipfsUrl(gatewayBase, pointer);

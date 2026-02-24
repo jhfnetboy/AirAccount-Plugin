@@ -1,9 +1,7 @@
 import 'webextension-polyfill';
 import { exampleThemeStorage } from '@extension/storage';
 
-exampleThemeStorage.get().then(theme => {
-  console.log('theme', theme);
-});
+void exampleThemeStorage.get();
 
 const FOREST_SUFFIX = 'forest.mushroom.box';
 const originalUrlByTabId = new Map<number, string>();
@@ -62,4 +60,4 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
   return false;
 });
 
-console.log('Background loaded');
+void 0;

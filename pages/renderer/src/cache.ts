@@ -7,7 +7,7 @@ type CacheEntry<T> = {
 const nowMs = () => Date.now();
 
 const keyFor = (parts: Array<string | number | null | undefined>) =>
-  `forest:cache:${parts.filter(Boolean).join(':')}`.slice(0, 512);
+  `forest:cache:${parts.filter(p => p !== null && p !== undefined).join(':')}`.slice(0, 512);
 
 const cacheGet = async <T>(
   keyParts: Array<string | number | null | undefined>,

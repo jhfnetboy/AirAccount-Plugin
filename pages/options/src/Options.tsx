@@ -217,8 +217,55 @@ const Options = () => {
     kind: 'idle' | 'loading' | 'success' | 'error';
     message?: string;
   }>({ kind: 'idle' });
+  const [endpointPermStatus, setEndpointPermStatus] = useState<{
+    kind: 'idle' | 'success' | 'error';
+    message?: string;
+  }>({ kind: 'idle' });
 
   const goGithubSite = () => chrome.tabs.create(PROJECT_URL_OBJECT);
+
+  const grantEndpointPermissions = async () => {
+    setEndpointPermStatus({ kind: 'idle' });
+    const api = chrome.permissions;
+    if (!api?.request) {
+      setEndpointPermStatus({ kind: 'error', message: 'permissions_api_unavailable' });
+      return;
+    }
+
+    const toOriginPattern = (raw: string) => {
+      const v = raw.trim();
+      if (!v) return null;
+      try {
+        const url = new URL(v);
+        if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+        return `${url.origin}/*`;
+      } catch {
+        return null;
+      }
+    };
+
+    const origins = Array.from(
+      new Set(
+        [
+          toOriginPattern(forestSettings.rpcUrl),
+          toOriginPattern(forestSettings.ipfsGatewayUrl),
+          toOriginPattern(forestSettings.ipfsApiUrl),
+          toOriginPattern(forestSettings.relayerUrl),
+        ].filter((v): v is string => Boolean(v)),
+      ),
+    );
+
+    if (!origins.length) {
+      setEndpointPermStatus({ kind: 'error', message: 'no_valid_origins' });
+      return;
+    }
+
+    const granted = await new Promise<boolean>(resolve => {
+      api.request({ origins }, ok => resolve(Boolean(ok)));
+    });
+
+    setEndpointPermStatus(granted ? { kind: 'success', message: 'granted' } : { kind: 'error', message: 'denied' });
+  };
 
   const inputClassName = useMemo(
     () =>
@@ -523,6 +570,19 @@ const Options = () => {
             placeholder="http://127.0.0.1:8787"
           />
         </label>
+
+        <div className={cn('grid gap-2')}>
+          <div className={cn('text-sm opacity-70')}>Endpoint Permissions</div>
+          <div className={cn('flex items-center gap-2')}>
+            <ToggleButton onClick={grantEndpointPermissions}>Grant access</ToggleButton>
+            {endpointPermStatus.kind !== 'idle' ? (
+              <div className={cn('text-sm')}>
+                Status: <code>{endpointPermStatus.kind}</code>{' '}
+                {endpointPermStatus.message ? <code>{endpointPermStatus.message}</code> : null}
+              </div>
+            ) : null}
+          </div>
+        </div>
 
         <label className={cn('flex items-center gap-2')}>
           <input
